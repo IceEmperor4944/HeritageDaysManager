@@ -1,6 +1,6 @@
 <template>
   <div class="app-shell">
-    <AppHeader />
+    <AppHeader v-if="useRoute().path !== '/login'" />
     <main class="page-content">
       <slot />
     </main>

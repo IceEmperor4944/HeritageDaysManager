@@ -1,0 +1,57 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+      - name: Check Supabase settings
+        run: |
+          if [ -z "$NUXT_PUBLIC_SUPABASE_URL" ] || [ -z "$NUXT_PUBLIC_SUPABASE_ANON_KEY" ]; then
+            echo "Set NUXT_PUBLIC_SUPABASE_URL and NUXT_PUBLIC_SUPABASE_ANON_KEY in repository Actions Variables."
+            exit 1
+          fi
+        env:
+          NUXT_PUBLIC_SUPABASE_URL: ${{ vars.NUXT_PUBLIC_SUPABASE_URL }}
+          NUXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NUXT_PUBLIC_SUPABASE_ANON_KEY }}
+      - name: Generate static site
+        run: npm run generate
+        env:
+          NUXT_APP_BASE_URL: ${{ steps.pages.outputs.base_path }}/
+          NUXT_PUBLIC_SUPABASE_URL: ${{ vars.NUXT_PUBLIC_SUPABASE_URL }}
+          NUXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NUXT_PUBLIC_SUPABASE_ANON_KEY }}
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .output/public
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

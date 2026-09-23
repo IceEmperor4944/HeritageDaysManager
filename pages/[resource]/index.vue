@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { getResource, isResourceKey, type ResourceKey } from '~/shared/resources'
+import { listResource, deleteResource, ResourceServiceError, type ListResponse } from '~/services/resources'
 
 const route = useRoute()
 const routeResource = String(route.params.resource)
@@ -12,26 +13,31 @@ const filters = reactive({ search: '', primary: '', secondary: '' })
 const page = ref(1)
 const deleteMessage = ref('')
 const deletingId = ref<string | number | null>(null)
-
-const requestQuery = computed(() => {
-  const query: Record<string, string | number> = { page: page.value, pageSize: 25 }
-  if (filters.search.trim()) query.search = filters.search.trim()
-  if (resource === 'contacts') {
-    if (filters.primary) query.is_sponsor = filters.primary
-    if (filters.secondary) query.is_volunteer = filters.secondary
-  }
-  if (resource === 'businesses' && filters.primary) query.attendance_confirmation = filters.primary
-  return query
-})
-
-const { data, status, error, refresh } = await useFetch<{ items: Record<string, unknown>[]; page: number; pageSize: number; total: number }>(`/api/${resource}`, {
-  query: requestQuery,
-  watch: false,
-})
+const data = ref<ListResponse | null>(null)
+const status = ref<'pending' | 'success' | 'error'>('pending')
+const error = ref<ResourceServiceError | null>(null)
 
 const items = computed(() => data.value?.items || [])
 const total = computed(() => data.value?.total || 0)
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / 25)))
+
+async function refresh() {
+  status.value = 'pending'
+  error.value = null
+  try {
+    data.value = await listResource(resource, {
+      search: filters.search.trim() || null,
+      primary: filters.primary === '' ? null : filters.primary === 'true',
+      secondary: filters.secondary === '' ? null : filters.secondary === 'true',
+    }, { page: page.value, pageSize: 25, offset: (page.value - 1) * 25 })
+    status.value = 'success'
+  } catch (caught) {
+    error.value = caught instanceof ResourceServiceError ? caught : new ResourceServiceError('The records could not be loaded.')
+    status.value = 'error'
+  }
+}
+
+onMounted(refresh)
 
 async function applyFilters() {
   page.value = 1
@@ -58,15 +64,14 @@ async function deleteRecord(id: string | number) {
   deleteMessage.value = ''
   deletingId.value = id
   try {
-    await $fetch(`/api/${resource}/${id}`, { method: 'DELETE' })
+    await deleteResource(resource, id)
     if (items.value.length === 1 && page.value > 1) page.value -= 1
     await refresh()
   } catch (caught: unknown) {
-    const fetchError = caught as { data?: { data?: { dependencies?: string[] } }; statusMessage?: string; message?: string }
-    const dependencies = fetchError.data?.data?.dependencies
-    deleteMessage.value = dependencies?.length
-      ? `Delete blocked. Remove these dependent records first: ${dependencies.join(', ')}.`
-      : fetchError.statusMessage || fetchError.message || 'The record could not be deleted.'
+    const serviceError = caught instanceof ResourceServiceError ? caught : null
+    deleteMessage.value = serviceError?.dependencies?.length
+      ? `Delete blocked. Remove these dependent records first: ${serviceError.dependencies.join(', ')}.`
+      : serviceError?.message || (caught instanceof Error ? caught.message : 'The record could not be deleted.')
   } finally {
     deletingId.value = null
   }
@@ -107,7 +112,7 @@ async function deleteRecord(id: string | number) {
 
     <p v-if="deleteMessage" class="notice error-message" role="alert">{{ deleteMessage }}</p>
     <p v-if="status === 'pending'" class="loading-message">Loading {{ definition.plural.toLowerCase() }}…</p>
-    <div v-else-if="error" class="notice error-message" role="alert">{{ error.statusMessage || `The ${definition.plural.toLowerCase()} could not be loaded.` }}</div>
+    <div v-else-if="error" class="notice error-message" role="alert">{{ error.message || `The ${definition.plural.toLowerCase()} could not be loaded.` }}</div>
     <div v-else-if="!items.length" class="empty-state">
       <h2>No {{ definition.plural.toLowerCase() }} found</h2>
       <p>Adjust the filters or add a {{ definition.singular.toLowerCase() }} to get started.</p>

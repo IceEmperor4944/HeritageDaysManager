@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import pg from 'pg'
 
@@ -9,16 +9,22 @@ if (!connectionString) {
   console.error('DATABASE_URL must be set before running migrations.')
   process.exitCode = 1
 } else {
-  const migration = await readFile(resolve('migrations/001_initial_schema.sql'), 'utf8')
+  const migrationsDirectory = resolve('migrations')
+  const migrations = (await readdir(migrationsDirectory))
+    .filter((name) => /^\d+_.+\.sql$/.test(name))
+    .sort()
   const client = new Client({ connectionString })
   try {
     await client.connect()
     await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())')
-    const migrationName = '001_initial_schema.sql'
-    const applied = await client.query('SELECT 1 FROM schema_migrations WHERE name = $1', [migrationName])
-    if (applied.rowCount) {
-      console.log(`${migrationName} has already been applied.`)
-    } else {
+    await client.query('REVOKE ALL ON TABLE schema_migrations FROM anon, authenticated')
+    for (const migrationName of migrations) {
+      const applied = await client.query('SELECT 1 FROM schema_migrations WHERE name = $1', [migrationName])
+      if (applied.rowCount) {
+        console.log(`${migrationName} has already been applied.`)
+        continue
+      }
+      const migration = await readFile(resolve(migrationsDirectory, migrationName), 'utf8')
       await client.query('BEGIN')
       try {
         await client.query(migration)

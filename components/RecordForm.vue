@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { getResource, type ResourceKey } from '~/shared/resources'
 import type { Payload } from '~/shared/validation'
+import { createResource, updateResource, ResourceServiceError } from '~/services/resources'
 
 type FormValue = string | number | boolean | null
 
@@ -58,14 +59,14 @@ async function submit() {
   saving.value = true
   try {
     const isEdit = Boolean(props.recordId)
-    const response = await $fetch<{ record: Record<string, unknown> }>(`/api/${props.resource}${isEdit ? `/${props.recordId}` : ''}`, {
-      method: isEdit ? 'PATCH' : 'POST', body: buildPayload(),
-    })
+    const response = isEdit
+      ? await updateResource(props.resource, props.recordId!, buildPayload())
+      : await createResource(props.resource, buildPayload())
     await navigateTo(`/${props.resource}/${response.record.id}`)
   } catch (error: unknown) {
-    const fetchError = error as { data?: { data?: { errors?: Record<string, string> } }; statusMessage?: string; message?: string }
-    errors.value = fetchError.data?.data?.errors || {}
-    submitError.value = fetchError.statusMessage || fetchError.message || 'The record could not be saved.'
+    const serviceError = error instanceof ResourceServiceError ? error : null
+    errors.value = serviceError?.fieldErrors || {}
+    submitError.value = serviceError?.message || (error instanceof Error ? error.message : 'The record could not be saved.')
   } finally {
     saving.value = false
   }

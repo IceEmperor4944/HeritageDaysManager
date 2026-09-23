@@ -1,17 +1,29 @@
 <script setup lang="ts">
 import { getResource, type ResourceKey } from '~/shared/resources'
-
-interface RelatedGroup {
-  resource: ResourceKey
-  label: string
-  items: Array<{ id: string | number; title: string; secondary?: string }>
-}
+import { deleteResource, getResource as loadResource, ResourceServiceError, type RelatedGroup } from '~/services/resources'
 
 const props = defineProps<{ resource: ResourceKey; recordId: string | number }>()
 const definition = computed(() => getResource(props.resource))
-const { data, status, error, refresh } = await useFetch<{ record: Record<string, unknown>; related: RelatedGroup[] }>(() => `/api/${props.resource}/${props.recordId}`)
+const data = ref<{ record: Record<string, unknown>; related: RelatedGroup[] } | null>(null)
+const status = ref<'pending' | 'success' | 'error'>('pending')
+const error = ref<ResourceServiceError | null>(null)
 const deleteMessage = ref('')
 const deleting = ref(false)
+
+async function refresh() {
+  status.value = 'pending'
+  error.value = null
+  try {
+    data.value = await loadResource(props.resource, props.recordId)
+    status.value = 'success'
+  } catch (caught) {
+    error.value = caught instanceof ResourceServiceError ? caught : new ResourceServiceError('The record could not be loaded.')
+    status.value = 'error'
+  }
+}
+
+onMounted(refresh)
+watch(() => [props.resource, props.recordId] as const, refresh)
 
 async function removeRecord() {
   const title = String(data.value?.record?.[definition.value.displayField] || 'this record')
@@ -19,14 +31,13 @@ async function removeRecord() {
   deleteMessage.value = ''
   deleting.value = true
   try {
-    await $fetch(`/api/${props.resource}/${props.recordId}`, { method: 'DELETE' })
+    await deleteResource(props.resource, props.recordId)
     await navigateTo(`/${props.resource}`)
   } catch (caught: unknown) {
-    const fetchError = caught as { data?: { data?: { dependencies?: string[] } }; statusMessage?: string; message?: string }
-    const dependencies = fetchError.data?.data?.dependencies
-    deleteMessage.value = dependencies?.length
-      ? `Delete blocked. Remove these dependent records first: ${dependencies.join(', ')}.`
-      : fetchError.statusMessage || fetchError.message || 'The record could not be deleted.'
+    const serviceError = caught instanceof ResourceServiceError ? caught : null
+    deleteMessage.value = serviceError?.dependencies?.length
+      ? `Delete blocked. Remove these dependent records first: ${serviceError.dependencies.join(', ')}.`
+      : serviceError?.message || (caught instanceof Error ? caught.message : 'The record could not be deleted.')
   } finally {
     deleting.value = false
   }
@@ -38,7 +49,7 @@ async function removeRecord() {
     <PageHeading :title="definition.singular" :back-to="`/${resource}`" :action-to="`/${resource}/${recordId}/edit`" action-label="Edit record" />
     <p v-if="status === 'pending'" class="loading-message">Loading record…</p>
     <div v-else-if="error" class="notice error-message" role="alert">
-      {{ error.statusCode === 404 ? 'This record no longer exists.' : error.statusMessage || 'The record could not be loaded.' }}
+      {{ error.statusCode === 404 ? 'This record no longer exists.' : error.message || 'The record could not be loaded.' }}
     </div>
     <template v-else-if="data">
       <p v-if="deleteMessage" class="notice error-message" role="alert">{{ deleteMessage }}</p>
